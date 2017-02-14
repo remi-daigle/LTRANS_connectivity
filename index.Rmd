@@ -1,0 +1,125 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+year <- as.numeric(commandArgs(TRUE)[1])
+pld <- as.numeric(commandArgs(TRUE)[2])
+
+print(paste("output distance_east.R year =",year,"pld =",pld))
+
+require(data.table)
+require(dplyr)
+require(readr)
+require(tidyr)
+require(rgdal)
+require(igraph)
+
+grid250 <- readOGR("/sb/project/uxb-461-aa/Cuke-MPA/positions/distances","grid250")
+
+filenames <- list.files(path="EastCoast/release_locations", pattern="rl.", full.names=TRUE,recursive=T)
+rllist <- suppressMessages(lapply( filenames, read_csv, col_names = F))
+rl <- rbindlist(rllist)
+setnames(rl,names(rl),c("long0","lat0","Z0","delay","site0"))
+rl$site0 <- grid250$UNIT_ID
+rl$bin <- rep(1:length(filenames),each=10000)[1:nrow(rl)]
+
+gr2 <- read.graph('/sb/project/uxb-461-aa/Cuke-MPA/positions/distances/distance_graph.net', format="pajek")
+
+#memory.limit(32000)
+#### loop for each year #####
+mypath_y <- paste0('/sb/project/uxb-461-aa/Cuke-MPA/output/E',year)
+
+if(!file.exists(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/E_data_",year,"_pld_",pld,".csv"))){
+    #### tabulate output ####
+    filenames <- list.files(path=mypath_y, pattern=glob2rx(paste0("*para    1",formatC(pld+1, width = 3, format = "d", flag = "0"),"*")), full.names=TRUE,recursive=T)
+    datalist <- suppressMessages(lapply( filenames, read_csv, col_names = F ))
+    dataset <- rbindlist(datalist)
+    setnames(dataset,names(dataset),c("long","lat","Z","Out","site"))
+    dataset$filename <- rep(filenames,do.call(rbind, lapply(datalist, function(x) dim(x)[1])))
+    dataset$site <- NA
+    rm(datalist)
+    
+    
+    dataset <- dataset %>%
+        mutate(temp=substr(filename,nchar(mypath_y)-4,nchar(filename))) %>% 
+        separate(temp,c("temp_type_year","rday","bin","time"),"/",convert=TRUE) %>% 
+        separate(temp_type_year,c("type","year"),sep=1,convert=TRUE) %>% 
+        mutate(time=as.integer(substr(time,9,12)))
+    
+    
+    
+    #### link release data to output ####
+    
+    for(i in 1:max(dataset$bin)){
+        x <- rl$bin==i
+        y <- dataset$bin==i
+        dataset$long0[y] <- rl$long0[x]
+        dataset$lat0[y] <- rl$lat0[x]
+        dataset$Z0[y] <- rl$Z0[x]
+        dataset$delay[y] <- rl$delay[x]
+        dataset$site0[y] <- rl$site0[x]
+    }
+    
+    
+    dataset$site <- NA
+	dataset$distance <- NA
+	write.csv(dataset,paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/E_data_",year,"_pld_",pld,".csv"),row.names=FALSE)
+} else {
+	if(file.exists(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/processed/E_data_",year,"_pld_",pld,".csv"))){
+		linenuma <- as.integer(unlist(strsplit(system(paste0("wc -l /sb/project/uxb-461-aa/Cuke-MPA/positions/processed/E_data_",year,"_pld_",pld,".csv"), intern=T), " "))[1])
+		linenumb <- as.integer(unlist(strsplit(system(paste0("wc -l /sb/project/uxb-461-aa/Cuke-MPA/positions/E_data_",year,"_pld_",pld,".csv"), intern=T), " "))[1])
+		if(linenuma==linenumb){
+			dataset <- read_csv(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/processed/E_data_",year,"_pld_",pld,".csv"))
+
+		} else {
+			dataset <- read_csv(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/E_data_",year,"_pld_",pld,".csv"))
+		}
+		
+	} else {
+		dataset <- read_csv(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/E_data_",year,"_pld_",pld,".csv"))
+	}
+	n <- 1000
+	begin <- nrow(dataset)-sum(is.na(dataset$site))
+	if(begin<1) begin <- 1
+	fin <- begin+400000
+	if(fin>nrow(dataset)) fin <- nrow(dataset)
+	for(i in seq(begin,fin,n)){
+    print(i)
+    i2 <- i+n-1
+    if(i2>nrow(dataset)) i2 <- nrow(dataset)
+    dataset$site[i:i2] <- apply(dataset[i:i2,],1,function(x) which.min(
+        sqrt(
+            (rl$lat0-as.numeric(x[names(dataset)=="lat"]))^2
+        )+
+            sqrt(
+                (rl$long0-as.numeric(x[names(dataset)=="long"]))^2
+            )))
+    
+    dataset$distance[i:i2] <- apply(dataset[i:i2,],1,function(x) shortest.paths(gr2,
+                                                                                as.numeric(x[names(dataset)=="site"]),
+                                                                                as.numeric(x[names(dataset)=="site0"]))
+    )
+}
+
+    
+    if(i2==nrow(dataset)){
+			write.csv(dataset,paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/processed/done/E_data_",year,"_pld_",pld,".csv"),row.names=FALSE)
+		unlink(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/processed/E_data_",year,"_pld_",pld,".csv"))
+		unlink(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/E_data_",year,"_pld_",pld,".csv"))
+	} else {
+		write.csv(dataset,paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/processed/E_data_",year,"_pld_",pld,".csv"),row.names=FALSE)
+	}
+}
+
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
