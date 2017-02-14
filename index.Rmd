@@ -1,37 +1,39 @@
 ---
-title: "R Notebook"
+title: "Tutorial to extract connectivity matrices from raw LTRANS output"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
-
+Let's start by loading our packages, if you haven't installed these previously, you will need to install them manually (e.g. `install.packages("dplyr")`)
 ```{r}
-year <- as.numeric(commandArgs(TRUE)[1])
-pld <- as.numeric(commandArgs(TRUE)[2])
-
-print(paste("output distance_east.R year =",year,"pld =",pld))
-
 require(data.table)
 require(dplyr)
 require(readr)
 require(tidyr)
 require(rgdal)
-require(igraph)
+# require(igraph)
+```
 
+Processing all the data in one pass will make your computer burst into flames, so lets first pick a `year` and a `pld`.
+
+```{r}
+year <- 1999
+pld <- 120
+```
+
+```{r}
 grid250 <- readOGR("/sb/project/uxb-461-aa/Cuke-MPA/positions/distances","grid250")
+```
 
+```{r}
 filenames <- list.files(path="EastCoast/release_locations", pattern="rl.", full.names=TRUE,recursive=T)
 rllist <- suppressMessages(lapply( filenames, read_csv, col_names = F))
 rl <- rbindlist(rllist)
 setnames(rl,names(rl),c("long0","lat0","Z0","delay","site0"))
 rl$site0 <- grid250$UNIT_ID
 rl$bin <- rep(1:length(filenames),each=10000)[1:nrow(rl)]
+```
 
-gr2 <- read.graph('/sb/project/uxb-461-aa/Cuke-MPA/positions/distances/distance_graph.net', format="pajek")
 
-#memory.limit(32000)
 #### loop for each year #####
 mypath_y <- paste0('/sb/project/uxb-461-aa/Cuke-MPA/output/E',year)
 
