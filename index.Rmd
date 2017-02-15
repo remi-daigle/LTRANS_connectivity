@@ -4,9 +4,11 @@ output:
   html_document:
     number_sections: yes
     toc: yes
+    toc_float: true
   html_notebook:
     number_sections: yes
     toc: yes
+    toc_float: true
 ---
 
 Let's start by loading our packages, if you haven't installed these previously, you will need to install them manually (e.g. `install.packages("tidyverse")`)
@@ -152,6 +154,7 @@ plot(biggridbb)
 
 plot(uniongrid,add=T,col='blue')
 ```
+
 ## Grid tyding
 So, now we have an OK grid we can use for demonstration purposes, but let's remove the cells that don't overlap with `grid250` and let's create a key so that we can figure our which cells from `grid250` overlap with which cells in `biggrid`
 ```{r}
@@ -173,13 +176,14 @@ key <- unlist(lapply(apply(key,1,which),'[[',1)) #remove the ones that stradle t
 plot(biggrid[19,])
 plot(grid250[key==19,],add=T)
 ```
+
 Use the key to set determine to which `biggrid` cell the sites correspond.
 ```{r}
 dataset$grid0 <- key[dataset$site0]
 dataset$grid <- key[dataset$site]
 head(dataset)
 ```
-
+## Calculate connectivity
 ```{r}
 # caculate a frequency table
 con_mat_table <- table(factor(dataset$grid0,levels=1:length(biggrid)),
