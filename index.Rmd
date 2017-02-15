@@ -1,127 +1,210 @@
 ---
 title: "Tutorial to extract connectivity matrices from raw LTRANS output"
-output: html_notebook
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  html_notebook:
+    number_sections: yes
+    toc: yes
 ---
 
-Let's start by loading our packages, if you haven't installed these previously, you will need to install them manually (e.g. `install.packages("dplyr")`)
-```{r}
+Let's start by loading our packages, if you haven't installed these previously, you will need to install them manually (e.g. `install.packages("tidyverse")`)
+```{r, message=FALSE}
 require(data.table)
-require(dplyr)
+require(tidyverse)
 require(readr)
-require(tidyr)
 require(rgdal)
-# require(igraph)
+require(rgeos)
+require(maptools)
 ```
 
 Processing all the data in one pass will make your computer burst into flames, so lets first pick a `year` and a `pld`.
-
 ```{r}
 year <- 1999
 pld <- 120
 ```
 
+# Loading data
+## Release Grid
+Let's load up and plot the grid we used to generate the particle releases. It's a hexagonal grid that DFO Maritimes regions is using in their MPA planning MARXAN analysis. I've taken the liberty to expand that grid beyond the DFO Maritimes region to cover the entire model domain from 0-250 m depth.
+
+We don't really need this, but might be useful for visualization and indexing.
 ```{r}
-grid250 <- readOGR("/sb/project/uxb-461-aa/Cuke-MPA/positions/distances","grid250")
+grid250 <- readOGR("data/shapefiles","grid250")
+plot(grid250)
 ```
 
+## Release locations
+Let's load up the release locations files that I generated using the above grid. First, list the files
 ```{r}
-filenames <- list.files(path="EastCoast/release_locations", pattern="rl.", full.names=TRUE,recursive=T)
-rllist <- suppressMessages(lapply( filenames, read_csv, col_names = F))
-rl <- rbindlist(rllist)
-setnames(rl,names(rl),c("long0","lat0","Z0","delay","site0"))
+# list the files
+filenames <- list.files(path="data/LTRANS_input", pattern="rl.", full.names=TRUE,recursive=T)
+
+# load all files into a list, read_csv is much faster than read.csv
+rllist <- lapply(filenames, read_csv,
+                 col_names = c("long0","lat0","Z0","delay","site0"),
+                 col_types = cols("d","d","i","i","i")
+)
+
+# set the names of the items in the list, so that you know which file it came from
+rllist <- setNames(rllist,filenames)
+
+# rbind the list
+rl <- rbindlist(rllist, idcol="filename")
+
+# The `site0` column was not set in the release location file. But in our case (you'll have to trust me) they correspond to the `UNIT_ID` in `grid250`
 rl$site0 <- grid250$UNIT_ID
-rl$bin <- rep(1:length(filenames),each=10000)[1:nrow(rl)]
+head(rl)
 ```
 
+The filename is a little clunky to work with. We just need the number to match with the directory structure I set for the raw data (more on this below).
+```{r}
+rl$bin <- gsub(".*rl_|.txt.*", "",rl$filename)
+head(rl)
+```
 
-#### loop for each year #####
-mypath_y <- paste0('/sb/project/uxb-461-aa/Cuke-MPA/output/E',year)
+## LTRANS data
+Before we start, I need to explain how I've organized the output in different directories indicating the `year`, `day`, and `bin`. However, I've preceded `year` with the letter `E` to indicate east, so I don't mix up my coasts! So if you look at the files in [`data/LTRANS_output/E1999/152/1/`](https://github.com/remi-daigle/LTRANS_connectivity/tree/master/data/LTRANS_output/E1999/152/1); That is the output of one model run which used the east coast model, using current velocities from the year 1999. In this case particles were released on the 152nd day of the year (June 1st). Lastly the `bin` number `1` relates to which release location file was used, in this case it was [rl_1.txt](https://github.com/remi-daigle/LTRANS_connectivity/blob/master/data/LTRANS_input/rl_1.txt). This type of directory structure is not typical of LTRANS output, but rather how I've chosen to organize my data.
 
-if(!file.exists(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/E_data_",year,"_pld_",pld,".csv"))){
-    #### tabulate output ####
-    filenames <- list.files(path=mypath_y, pattern=glob2rx(paste0("*para    1",formatC(pld+1, width = 3, format = "d", flag = "0"),"*")), full.names=TRUE,recursive=T)
-    datalist <- suppressMessages(lapply( filenames, read_csv, col_names = F ))
-    dataset <- rbindlist(datalist)
-    setnames(dataset,names(dataset),c("long","lat","Z","Out","site"))
-    dataset$filename <- rep(filenames,do.call(rbind, lapply(datalist, function(x) dim(x)[1])))
-    dataset$site <- NA
-    rm(datalist)
-    
-    
-    dataset <- dataset %>%
-        mutate(temp=substr(filename,nchar(mypath_y)-4,nchar(filename))) %>% 
-        separate(temp,c("temp_type_year","rday","bin","time"),"/",convert=TRUE) %>% 
-        separate(temp_type_year,c("type","year"),sep=1,convert=TRUE) %>% 
-        mutate(time=as.integer(substr(time,9,12)))
-    
-    
-    
-    #### link release data to output ####
-    
-    for(i in 1:max(dataset$bin)){
-        x <- rl$bin==i
-        y <- dataset$bin==i
-        dataset$long0[y] <- rl$long0[x]
-        dataset$lat0[y] <- rl$lat0[x]
-        dataset$Z0[y] <- rl$Z0[x]
-        dataset$delay[y] <- rl$delay[x]
-        dataset$site0[y] <- rl$site0[x]
-    }
-    
-    
-    dataset$site <- NA
-	dataset$distance <- NA
-	write.csv(dataset,paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/E_data_",year,"_pld_",pld,".csv"),row.names=FALSE)
-} else {
-	if(file.exists(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/processed/E_data_",year,"_pld_",pld,".csv"))){
-		linenuma <- as.integer(unlist(strsplit(system(paste0("wc -l /sb/project/uxb-461-aa/Cuke-MPA/positions/processed/E_data_",year,"_pld_",pld,".csv"), intern=T), " "))[1])
-		linenumb <- as.integer(unlist(strsplit(system(paste0("wc -l /sb/project/uxb-461-aa/Cuke-MPA/positions/E_data_",year,"_pld_",pld,".csv"), intern=T), " "))[1])
-		if(linenuma==linenumb){
-			dataset <- read_csv(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/processed/E_data_",year,"_pld_",pld,".csv"))
+Getting back to the files that are produced from one model run, I ignore the `endfile.csv`, and focus on the `para    XXXX.csv` files. I ran the particle tracking for 120 days and you'll see that the files are all sequentially numbered 1002 to 1121 (and that there are 120 of them). For reasons beyond my understanding, the file that has the positions of the larvae at the end of 'day 1' is `para    1002.csv', 'day 2' is `para    1003.csv', and so on until 'day 120' is `para    1121.csv'
+```{r}
+# list the particle tracking files for that particular year and pld
+filenames <- list.files(path=paste0("data/LTRANS_output/E",year), pattern=glob2rx(paste0("*para    1",formatC(pld+1, width = 3, format = "d", flag = "0"),"*")), full.names=TRUE,recursive=T)
 
-		} else {
-			dataset <- read_csv(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/E_data_",year,"_pld_",pld,".csv"))
-		}
-		
-	} else {
-		dataset <- read_csv(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/E_data_",year,"_pld_",pld,".csv"))
-	}
-	n <- 1000
-	begin <- nrow(dataset)-sum(is.na(dataset$site))
-	if(begin<1) begin <- 1
-	fin <- begin+400000
-	if(fin>nrow(dataset)) fin <- nrow(dataset)
-	for(i in seq(begin,fin,n)){
-    print(i)
+# load all files into a list, read_csv is much faster than read.csv
+datalist <- lapply(filenames, read_csv,
+                 col_names = c("long","lat","Z","Out","site"),
+                 col_types = cols("d","d","d","i","i")
+)
+
+# set the names of the items in the list, so that you know which file it came from
+datalist <- setNames(datalist,filenames)
+
+# rbind the list
+dataset <- rbindlist(datalist, idcol="filename")
+dataset$site <- NA
+rm(datalist)
+
+# extract all the useful information out of filename
+dataset <- dataset %>%
+    mutate(temp=substr(filename,20,nchar(filename))) %>% 
+    separate(temp,c("temp_type_year","rday","bin","time"),"/",convert=TRUE) %>% 
+    separate(temp_type_year,c("type","year"),sep=1,convert=TRUE) %>% 
+    mutate(time=as.integer(substr(time,9,12)))
+    
+# link release data to output by bin, not elegant, but it works!
+
+for(i in unique(dataset$bin)){
+    x <- rl$bin==i
+    y <- dataset$bin==i
+    dataset$long0[y] <- rl$long0[x]
+    dataset$lat0[y] <- rl$lat0[x]
+    dataset$Z0[y] <- rl$Z0[x]
+    dataset$delay[y] <- rl$delay[x]
+    dataset$site0[y] <- rl$site0[x]
+}
+head(dataset)
+```
+
+# Calculating connectivity
+## Determine settlement location
+Now, we know what site we released each particle from (`site0`) and the latitude/longitude of where each particle was after a pld of `r pld` days. However, we don't know the `site` that corresponds to the latitude/longitude. We could fire up R's GIS type tools (e.g. `rgeos::gContains`), but we don't need anything that fancy for this type a grid. We only need to know which release location (which are the center of each grid hexagon). 
+
+Now with this example `dataset` we could likely calculate all of
+```{r} 
+dataset$site <- NA
+
+n <- 1000
+for(i in 1:ceiling(nrow(dataset)/n)){
     i2 <- i+n-1
     if(i2>nrow(dataset)) i2 <- nrow(dataset)
-    dataset$site[i:i2] <- apply(dataset[i:i2,],1,function(x) which.min(
-        sqrt(
-            (rl$lat0-as.numeric(x[names(dataset)=="lat"]))^2
-        )+
-            sqrt(
-                (rl$long0-as.numeric(x[names(dataset)=="long"]))^2
+    
+    dataset$site[i:i2] <- apply(dataset[i:i2,],1,
+                                function(x) which.min(
+                                    sqrt(
+                                        (rl$lat0-as.numeric(x[names(dataset)=="lat"]))^2
+                                    )+
+                                        sqrt(
+                                            (rl$long0-as.numeric(x[names(dataset)=="long"]))^2
             )))
-    
-    dataset$distance[i:i2] <- apply(dataset[i:i2,],1,function(x) shortest.paths(gr2,
-                                                                                as.numeric(x[names(dataset)=="site"]),
-                                                                                as.numeric(x[names(dataset)=="site0"]))
-    )
 }
-
-    
-    if(i2==nrow(dataset)){
-			write.csv(dataset,paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/processed/done/E_data_",year,"_pld_",pld,".csv"),row.names=FALSE)
-		unlink(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/processed/E_data_",year,"_pld_",pld,".csv"))
-		unlink(paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/E_data_",year,"_pld_",pld,".csv"))
-	} else {
-		write.csv(dataset,paste0("/sb/project/uxb-461-aa/Cuke-MPA/positions/processed/E_data_",year,"_pld_",pld,".csv"),row.names=FALSE)
-	}
-}
-
-
+head(dataset)    
 ```
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+## Generate sampling grid
+Now the release grid has `r length(grid250)` cells. If we tried to calculate a matrix using those, the resulting matrix would be over 45 GB, big problem! Don't believe me? Try it!
+```{r, eval=FALSE}
+matrix(0,ncol=length(grid250),nrow=length(grid250))
+```
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+Anyway, the point is, we need a bigger cell size grid so we can simplify this computationally.
+```{r}
+uniongrid <- unionSpatialPolygons(grid250,rep(1,length(grid250)))
+
+proj <- "+proj=utm +zone=20 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"
+uniongrid <- spTransform(uniongrid,CRS(proj))
+
+bb=Spatial(bbox(gBuffer(uniongrid,width=100000)), proj4string = CRS(proj))
+             
+biggridbb <- HexPoints2SpatialPolygons(spsample(bb, type="hexagonal", n=500))
+plot(biggridbb)
+
+plot(uniongrid,add=T,col='blue')
+```
+## Grid tyding
+So, now we have an OK grid we can use for demonstration purposes, but let's remove the cells that don't overlap with `grid250` and let's create a key so that we can figure our which cells from `grid250` overlap with which cells in `biggrid`
+```{r}
+biggrid <- biggridbb[gIntersects(biggridbb,uniongrid,byid=T)[1,],]
+biggrid <- spChFIDs(biggrid,as.character(1:length(biggrid)))
+plot(biggrid)
+plot(uniongrid,add=T,col='blue')
+
+# before we keep going let's change the projection on `biggrid` back to what we have for `grid250`
+biggrid <- spTransform(biggrid,CRS(proj4string(grid250)))
+```
+
+Make a key
+```{r}
+key <- gIntersects(biggrid,grid250,byid=T)
+key <- unlist(lapply(apply(key,1,which),'[[',1)) #remove the ones that stradle the border
+
+# plot and example to use the key
+plot(biggrid[19,])
+plot(grid250[key==19,],add=T)
+```
+Use the key to set determine to which `biggrid` cell the sites correspond.
+```{r}
+dataset$grid0 <- key[dataset$site0]
+dataset$grid <- key[dataset$site]
+head(dataset)
+```
+
+```{r}
+# caculate a frequency table
+con_mat_table <- table(factor(dataset$grid0,levels=1:length(biggrid)),
+                     factor(dataset$grid,levels=1:length(biggrid))
+)
+
+# I find the `table` objects in R a bit awkward to handle, so you can examin it via a `data.frame`. In this format, `Var1` is equivalent to `grid0`; your source cells. While `Var2` is equivalent to `grid`; your settlement cells
+con_mat_df <- as.data.frame(con_mat_table)
+head(con_mat_df)
+
+# ... or a matrix. In this format, the rownames are equivalent to `grid0`; your source cells. While the column names are equivalent to `grid`; your settlement cells
+con_mat <- as.matrix(con_mat_table)
+head(con_mat)
+```
+
+However, you'll notice that these are frequencies, not probabilities. First let's determine how many larvae were released from each cell
+```{r}
+# caculate a frequency table
+n <- as.data.frame(table(factor(dataset$grid0,levels=1:length(biggrid))))
+
+# now we can divide the frequency by n to get probabilities. (what I did below only works if the levels of the factors in `n` and con_mat_df$Var1 are the same!)
+con_mat_df$percent <- con_mat_df$Freq/n$Freq
+head(con_mat_df)
+
+# and of course we can do the same operation in matrix form.
+con_mat_percent <- con_mat/n$Freq
+head(con_mat_percent)
+```
