@@ -212,3 +212,34 @@ head(con_mat_df)
 con_mat_percent <- con_mat/n$Freq
 head(con_mat_percent)
 ```
+# Dispersal Kernels
+Instead of calculating the distance between each grid cell, I'm going to represent the grid via row and column numbers. This will ignore the actual 'in water' distance travelled, but it is a lot quicker for demonstration purposes.
+
+First, we'll extract the projected coordinates of the center of each cell.
+```{r}
+biggrid$row <- round(coordinates(spTransform(biggrid,CRS(proj))))[,2]
+biggrid$col <- round(coordinates(spTransform(biggrid,CRS(proj))))[,1]
+```
+
+Then, we can standardize those coordinates into row and column numbers. 
+```{r}
+rowsize <- sort(unique(biggrid$row))[2]-sort(unique(biggrid$row))[1]
+biggrid$row <- round((biggrid$row-min(biggrid$row))/rowsize)
+
+colsize <- sort(unique(biggrid$col))[2]-sort(unique(biggrid$col))[1]
+biggrid$col <- round((biggrid$col-min(biggrid$col))/colsize)
+```
+
+Then, since we already know which grid cell each particle originated `grid0` and where each particle settled `grid`, we can now calculate the difference in column/row numbers. We multiply that difference by the `rowsize` or `colsize` to get the vertical (`NS`) distance and horizontal (`WE`) distance. Finally we can also plot the dispersal kernel.
+```{r}
+dataset$NS <- (biggrid$row[dataset$grid]-biggrid$row[dataset$grid0])*rowsize
+dataset$WE <- (biggrid$col[dataset$grid]-biggrid$col[dataset$grid0])*colsize
+
+hist(dataset$NS, col='#d95f0280', xlim=c(
+    min(c(dataset$NS,dataset$WE),na.rm=T),
+    max(c(dataset$NS,dataset$WE),na.rm=T)
+)
+)
+hist(dataset$WE, col='#7570b380', add=T)
+```
+
