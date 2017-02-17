@@ -90,7 +90,7 @@ rm(datalist)
 
 # extract all the useful information out of filename
 dataset <- dataset %>%
-    mutate(temp=substr(filename,20,nchar(filename))) %>% 
+    mutate(temp=substr(filename,20,nchar(filename))) %>%
     separate(temp,c("temp_type_year","rday","bin","time"),"/",convert=TRUE) %>% 
     separate(temp_type_year,c("type","year"),sep=1,convert=TRUE) %>% 
     mutate(time=as.integer(substr(time,9,12)))
@@ -118,17 +118,17 @@ Now with this example `dataset` we could likely calculate all of
 dataset$site <- NA
 
 n <- 1000
-for(i in 1:ceiling(nrow(dataset)/n)){
+for(i in seq(1,nrow(dataset),n)){
     i2 <- i+n-1
     if(i2>nrow(dataset)) i2 <- nrow(dataset)
     
     dataset$site[i:i2] <- apply(dataset[i:i2,],1,
                                 function(x) which.min(
-                                    sqrt(
-                                        (rl$lat0-as.numeric(x[names(dataset)=="lat"]))^2
+                                    abs(
+                                        (rl$lat0-as.numeric(x[names(dataset)=="lat"]))
                                     )+
-                                        sqrt(
-                                            (rl$long0-as.numeric(x[names(dataset)=="long"]))^2
+                                        abs(
+                                            (rl$long0-as.numeric(x[names(dataset)=="long"]))
             )))
 }
 head(dataset)    
@@ -147,7 +147,7 @@ uniongrid <- unionSpatialPolygons(grid250,rep(1,length(grid250)))
 proj <- "+proj=utm +zone=20 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"
 uniongrid <- spTransform(uniongrid,CRS(proj))
 
-bb=Spatial(bbox(gBuffer(uniongrid,width=100000)), proj4string = CRS(proj))
+bb <- Spatial(bbox(gBuffer(uniongrid,width=100000)), proj4string = CRS(proj))
              
 biggridbb <- HexPoints2SpatialPolygons(spsample(bb, type="hexagonal", n=500))
 plot(biggridbb)
@@ -235,11 +235,15 @@ Then, since we already know which grid cell each particle originated `grid0` and
 dataset$NS <- (biggrid$row[dataset$grid]-biggrid$row[dataset$grid0])*rowsize
 dataset$WE <- (biggrid$col[dataset$grid]-biggrid$col[dataset$grid0])*colsize
 
-hist(dataset$NS, col='#d95f0280', xlim=c(
-    min(c(dataset$NS,dataset$WE),na.rm=T),
-    max(c(dataset$NS,dataset$WE),na.rm=T)
+hist(dataset$NS, col='#d95f0280',
+     breaks=seq(-1.5*10^6,1.5*10^6,10^5),
+     xlim=c(
+         min(c(dataset$NS,dataset$WE),na.rm=T),
+         max(c(dataset$NS,dataset$WE),na.rm=T)
+     )
 )
+hist(dataset$WE, col='#7570b380', add=T,
+     breaks=seq(-1.5*10^6,1.5*10^6,10^5)
 )
-hist(dataset$WE, col='#7570b380', add=T)
 ```
 
