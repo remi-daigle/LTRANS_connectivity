@@ -1,18 +1,25 @@
 ---
 title: "Tutorial to extract connectivity matrices from raw LTRANS output"
-output:
+output: 
   html_document:
     number_sections: yes
     toc: yes
-    toc_float: true
+    toc_float: yes
   html_notebook:
     number_sections: yes
     toc: yes
-    toc_float: true
+    toc_float: yes
+  github_document: 
+    pandoc_args: [ 
+      "--output=README.md" 
+    ] 
 ---
+Before we begin, if you want to follow along, this tutorial assumes you have already installed [R](http://www.r-project.org/) and [RStudio](http://www.rstudio.com/). Additionally, you will need the data contained in the project folder. You can go to the GitHub [repository](https://github.com/remi-daigle/LTRANS_connectivity) to download (or fork, etc) the whole project folder including the R markdown file used to generate this website, or you can [click here](https://github.com/remi-daigle/LTRANS_connectivity/archive/gh-pages.zip) to download the project folder as a zipped file.
+
+I recommend opening using RStudio and opening the `LTRANS_connectivity.Rproj` inside the project directory, since that sets the R working directory to wherever you have downloaded the project. That way R will know where to find the data!
 
 Let's start by loading our packages, if you haven't installed these previously, you will need to install them manually (e.g. `install.packages("tidyverse")`)
-```{r, message=FALSE}
+```{r loading packages,message=FALSE}
 require(data.table)
 require(tidyverse)
 require(readr)
@@ -22,7 +29,7 @@ require(maptools)
 ```
 
 Processing all the data in one pass will make your computer burst into flames, so lets first pick a `year` and a `pld`.
-```{r}
+```{r setting year and pld}
 year <- 1999
 pld <- 120
 ```
@@ -32,14 +39,14 @@ pld <- 120
 Let's load up and plot the grid we used to generate the particle releases. It's a hexagonal grid that DFO Maritimes regions is using in their MPA planning MARXAN analysis. I've taken the liberty to expand that grid beyond the DFO Maritimes region to cover the entire model domain from 0-250 m depth.
 
 We don't really need this, but might be useful for visualization and indexing.
-```{r}
+```{r loading grid}
 grid250 <- readOGR("data/shapefiles","grid250")
 plot(grid250)
 ```
 
 ## Release locations
 Let's load up the release locations files that I generated using the above grid. First, list the files
-```{r}
+```{r load release locations}
 # list the files
 filenames <- list.files(path="data/LTRANS_input", pattern="rl.", full.names=TRUE,recursive=T)
 
@@ -61,7 +68,7 @@ head(rl)
 ```
 
 The filename is a little clunky to work with. We just need the number to match with the directory structure I set for the raw data (more on this below).
-```{r}
+```{r define rl$bin}
 rl$bin <- gsub(".*rl_|.txt.*", "",rl$filename)
 head(rl)
 ```
@@ -70,7 +77,7 @@ head(rl)
 Before we start, I need to explain how I've organized the output in different directories indicating the `year`, `day`, and `bin`. However, I've preceded `year` with the letter `E` to indicate east, so I don't mix up my coasts! So if you look at the files in [`data/LTRANS_output/E1999/152/1/`](https://github.com/remi-daigle/LTRANS_connectivity/tree/master/data/LTRANS_output/E1999/152/1); That is the output of one model run which used the east coast model, using current velocities from the year 1999. In this case particles were released on the 152nd day of the year (June 1st). Lastly the `bin` number `1` relates to which release location file was used, in this case it was [rl_1.txt](https://github.com/remi-daigle/LTRANS_connectivity/blob/master/data/LTRANS_input/rl_1.txt). This type of directory structure is not typical of LTRANS output, but rather how I've chosen to organize my data.
 
 Getting back to the files that are produced from one model run, I ignore the `endfile.csv`, and focus on the `para    XXXX.csv` files. I ran the particle tracking for 120 days and you'll see that the files are all sequentially numbered 1002 to 1121 (and that there are 120 of them). For reasons beyond my understanding, the file that has the positions of the larvae at the end of 'day 1' is `para    1002.csv', 'day 2' is `para    1003.csv', and so on until 'day 120' is `para    1121.csv'
-```{r}
+```{r load LTRANS output}
 # list the particle tracking files for that particular year and pld
 filenames <- list.files(path=paste0("data/LTRANS_output/E",year), pattern=glob2rx(paste0("*para    1",formatC(pld+1, width = 3, format = "d", flag = "0"),"*")), full.names=TRUE,recursive=T)
 
@@ -114,7 +121,7 @@ head(dataset)
 Now, we know what site we released each particle from (`site0`) and the latitude/longitude of where each particle was after a pld of `r pld` days. However, we don't know the `site` that corresponds to the latitude/longitude. We could fire up R's GIS type tools (e.g. `rgeos::gContains`), but we don't need anything that fancy for this type a grid. We only need to know which release location (which are the center of each grid hexagon). 
 
 Now with this example `dataset` we could likely calculate all of
-```{r} 
+```{r define dataset$site} 
 dataset$site <- NA
 
 n <- 1000
@@ -136,12 +143,12 @@ head(dataset)
 
 ## Generate sampling grid
 Now the release grid has `r length(grid250)` cells. If we tried to calculate a matrix using those, the resulting matrix would be over 45 GB, big problem! Don't believe me? Try it!
-```{r, eval=FALSE}
+```{r demonstrate error, eval=FALSE}
 matrix(0,ncol=length(grid250),nrow=length(grid250))
 ```
 
 Anyway, the point is, we need a bigger cell size grid so we can simplify this computationally.
-```{r}
+```{r generate sampling grid}
 uniongrid <- unionSpatialPolygons(grid250,rep(1,length(grid250)))
 
 proj <- "+proj=utm +zone=20 +datum=NAD83 +units=m +no_defs +ellps=GRS80 +towgs84=0,0,0"
@@ -157,7 +164,7 @@ plot(uniongrid,add=T,col='blue')
 
 ## Grid tyding
 So, now we have an OK grid we can use for demonstration purposes, but let's remove the cells that don't overlap with `grid250` and let's create a key so that we can figure our which cells from `grid250` overlap with which cells in `biggrid`
-```{r}
+```{r cleanup new grid}
 biggrid <- biggridbb[gIntersects(biggridbb,uniongrid,byid=T)[1,],]
 biggrid <- spChFIDs(biggrid,as.character(1:length(biggrid)))
 plot(biggrid)
@@ -168,7 +175,7 @@ biggrid <- spTransform(biggrid,CRS(proj4string(grid250)))
 ```
 
 Make a key
-```{r}
+```{r making a key}
 key <- gIntersects(biggrid,grid250,byid=T)
 key <- unlist(lapply(apply(key,1,which),'[[',1)) #remove the ones that stradle the border
 
@@ -178,13 +185,13 @@ plot(grid250[key==19,],add=T)
 ```
 
 Use the key to set determine to which `biggrid` cell the sites correspond.
-```{r}
+```{r translate sites to new grid}
 dataset$grid0 <- key[dataset$site0]
 dataset$grid <- key[dataset$site]
 head(dataset)
 ```
 ## Calculate connectivity
-```{r}
+```{r frequency}
 # caculate a frequency table
 con_mat_table <- table(factor(dataset$grid0,levels=1:length(biggrid)),
                      factor(dataset$grid,levels=1:length(biggrid))
@@ -200,7 +207,7 @@ head(con_mat)
 ```
 
 However, you'll notice that these are frequencies, not probabilities. First let's determine how many larvae were released from each cell
-```{r}
+```{r calculate percents}
 # caculate a frequency table
 n <- as.data.frame(table(factor(dataset$grid0,levels=1:length(biggrid))))
 
@@ -216,13 +223,13 @@ head(con_mat_percent)
 Instead of calculating the distance between each grid cell, I'm going to represent the grid via row and column numbers. This will ignore the actual 'in water' distance travelled, but it is a lot quicker for demonstration purposes.
 
 First, we'll extract the projected coordinates of the center of each cell.
-```{r}
+```{r extract coordinates in meters}
 biggrid$row <- round(coordinates(spTransform(biggrid,CRS(proj))))[,2]
 biggrid$col <- round(coordinates(spTransform(biggrid,CRS(proj))))[,1]
 ```
 
 Then, we can standardize those coordinates into row and column numbers. 
-```{r}
+```{r standarize row & col}
 rowsize <- sort(unique(biggrid$row))[2]-sort(unique(biggrid$row))[1]
 biggrid$row <- round((biggrid$row-min(biggrid$row))/rowsize)
 
@@ -231,7 +238,7 @@ biggrid$col <- round((biggrid$col-min(biggrid$col))/colsize)
 ```
 
 Then, since we already know which grid cell each particle originated `grid0` and where each particle settled `grid`, we can now calculate the difference in column/row numbers. We multiply that difference by the `rowsize` or `colsize` to get the vertical (`NS`) distance and horizontal (`WE`) distance. Finally we can also plot the dispersal kernel.
-```{r}
+```{r generate histogram}
 dataset$NS <- (biggrid$row[dataset$grid]-biggrid$row[dataset$grid0])*rowsize
 dataset$WE <- (biggrid$col[dataset$grid]-biggrid$col[dataset$grid0])*colsize
 
